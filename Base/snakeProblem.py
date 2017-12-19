@@ -18,6 +18,9 @@ S_RIGHT, S_LEFT, S_UP, S_DOWN = 0,1,2,3
 XSIZE,YSIZE = 14,14
 BOARD_SIZE = (YSIZE - 2) * (XSIZE - 2)
 NFOOD = 1 # NOTE: YOU MAY NEED TO ADD A CHECK THAT THERE ARE ENOUGH SPACES LEFT FOR THE FOOD (IF THE TAIL IS VERY LONG)
+MUTPB = 0.7
+CXPB = 0.7
+GEN = 200
 
 def dir_map(dir, y, x):
 	if (dir == S_RIGHT):
@@ -149,20 +152,45 @@ class SnakePlayer(list):
 		else:
 			left_coord[0]+=1
 		return left_coord
-			
+		
 	def sense_obstacle_right(self):
 		right_coord = self.get_right()
 		return (right_coord in self.body) or checkWall(right_coord)
+		
+	def if_obstacle_right(self, out1, out2):
+		return partial(if_then_else, self.sense_obstacle_right, out1, out2)
 
 	def sense_obstacle_left(self):
 		left_coord = self.get_left()
 		return (left_coord in self.body) or checkWall(left_coord)
 		
-	def if_obstacle_right(self, out1, out2):
-		return partial(if_then_else, self.sense_obstacle_right, out1, out2)
-		
 	def if_obstacle_left(self, out1, out2):
 		return partial(if_then_else, self.sense_obstacle_left, out1, out2)
+	
+	def sense_move_right(self):
+		return self.direction == S_RIGHT
+
+	def if_move_right(self, out1, out2):
+		return partial(if_then_else, self.sense_move_right, out1, out2)
+		
+	def sense_move_left(self):
+		return self.direction == S_LEFT
+	
+	def if_move_left(self, out1, out2):
+		return partial(if_then_else, self.sense_move_left, out1, out2)
+	
+	def sense_move_up(self):
+		return self.direction == S_UP
+	
+	def if_move_up(self, out1, out2):
+		return partial(if_then_else, self.sense_move_up, out1, out2)
+	
+	def sense_move_down(self):
+		return self.direction == S_DOWN
+	
+	def if_move_down(self, out1, out2):
+		return partial(if_then_else, self.sense_move_down, out1, out2)
+	
 	
 # This function places a food item in the environment
 def placeFood(snake):
@@ -202,7 +230,8 @@ def displayStrategyRun(individual):
 
 	for f in food:
 		win.addch(f[0], f[1], '@')
-
+	
+	steps = 0
 	timer = 0
 	collided = False
 	while not collided and not timer == ((2*XSIZE) * YSIZE):
@@ -222,7 +251,7 @@ def displayStrategyRun(individual):
 			for f in food: win.addch(f[0], f[1], ' ')
 			food = placeFood(snake)
 			for f in food: win.addch(f[0], f[1], '@')
-			timer = 0
+			#timer = 0
 		else:    
 			last = snake.body.pop()
 			win.addch(last[0], last[1], ' ')
@@ -231,6 +260,8 @@ def displayStrategyRun(individual):
 
 		collided = snake.snakeHasCollided()
 		hitBounds = (timer == ((2*XSIZE) * YSIZE))
+		
+		steps += 1
 
 	curses.endwin()
 
@@ -239,25 +270,29 @@ def displayStrategyRun(individual):
 	print snake.score
 	#raw_input("Press to continue...")
 
-	return snake.score,
-
+	return snake.score, steps
 
 # This outline function provides partial code for running the game with an evolved agent
 # There is no graphical output, and it runs rapidly, making it ideal for
 # you need to modify it for running your agents through the game for evaluation
 # which will depend on what type of EA you have used, etc.
 # Feel free to make any necessary modifications to this section.
-def runGame():
+def runGame(individual):
 	global snake
+	global pset
+	
+	routine = gp.compile(individual, pset)
 
 	totalScore = 0
 
 	snake._reset()
 	food = placeFood(snake)
 	timer = 0
+	steps = 0
 	while not snake.snakeHasCollided() and not timer == XSIZE * YSIZE:
 
 		## EXECUTE THE SNAKE'S BEHAVIOUR HERE ##
+		routine()
 		
 		snake.updatePosition()
 
@@ -269,9 +304,11 @@ def runGame():
 			snake.body.pop()
 			timer += 1 # timesteps since last eaten
 
-		totalScore += snake.score
+		#totalScore += snake.score
+		steps += 1
 		
-	return totalScore,
+	#return totalScore,
+	return snake.score, steps
 
 
 def main():
@@ -291,18 +328,16 @@ def main():
 	
 	#pset.addPrimitive(snake.if_obstacle_up, 2)
 	#pset.addPrimitive(snake.if_obstacle_down, 2)
-	#pset.addPrimitive(snake.if_obstacle_left, 2)
-	#pset.addPrimitive(snake.if_obstacle_right, 2)
 	
 	#pset.addPrimitive(snake.if_next_obstacle_up, 2)
 	#pset.addPrimitive(snake.if_next_obstacle_down, 2)
 	#pset.addPrimitive(snake.if_next_obstacle_left, 2)
 	#pset.addPrimitive(snake.if_next_obstacle_right, 2)
 	
-	#pset.addPrimitive(snake.if_move_up, 2)
-	#pset.addPrimitive(snake.if_move_down, 2)
-	#pset.addPrimitive(snake.if_move_left, 2)
-	#pset.addPrimitive(snake.if_move_right, 2)
+	pset.addPrimitive(snake.if_move_up, 2)
+	pset.addPrimitive(snake.if_move_down, 2)
+	pset.addPrimitive(snake.if_move_left, 2)
+	pset.addPrimitive(snake.if_move_right, 2)
 	
 	pset.addTerminal(snake.changeDirectionUp)
 	pset.addTerminal(snake.changeDirectionDown)
@@ -322,10 +357,15 @@ def main():
 	toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.expr_init)
 	toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 	
-	def evalSnake(individual):
-		return displayStrategyRun(individual)
+	def evalSteps(individual):
+		score, steps = runGame(individual)
+		return steps,
 	
-	toolbox.register("evaluate", evalSnake)
+	def evalScore(individual):
+		score, steps = runGame(individual)
+		return score,
+	
+	toolbox.register("evaluate", evalScore)
 	toolbox.register("select", tools.selTournament, tournsize=5)
 	toolbox.register("mate", gp.cxOnePoint)
 	toolbox.register("expr_mut", gp.genHalfAndHalf, min_=1, max_=4)
@@ -336,8 +376,8 @@ def main():
 	
 	random.seed(69)
 	
-	pop = toolbox.population(n=5)
-	hof = tools.HallOfFame(1)
+	pop = toolbox.population(n=400)
+	hof = tools.HallOfFame(5)
 	
 	stats = tools.Statistics(lambda ind: ind.fitness.values)
 	stats.register("avg", numpy.mean)
@@ -345,11 +385,11 @@ def main():
 	stats.register("min", numpy.min)
 	stats.register("max", numpy.max)
 	
-	pop, log = algorithms.eaSimple(pop, toolbox, 0.5, 0.5, 40, stats, halloffame=hof)
+	pop, log = algorithms.eaSimple(pop, toolbox, MUTPB, CXPB, GEN, stats, halloffame=hof)
 	
 	expr = tools.selBest(pop, 1)[0]
 	nodes, edges, labels = gp.graph(expr)
-
+	
 	# g = pgv.AGraph(nodeSep=1.0)
 	# g.add_nodes_from(nodes)
 	# g.add_edges_from(edges)
